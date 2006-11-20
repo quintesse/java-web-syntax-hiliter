@@ -9,6 +9,9 @@
 
 package org.syntax.jedit.tokenmarker;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.syntax.jedit.*;
 import javax.swing.text.Segment;
 
@@ -19,6 +22,13 @@ import javax.swing.text.Segment;
  * @version $Id: HTMLTokenMarker.java,v 1.34 1999/12/13 03:40:29 sp Exp $
  */
 public class HTMLTokenMarker extends TokenMarker {
+	// These kind of patterns are just too scary for words!
+	// But basically it finds HTML/XML attributes within the string.
+	// Allowing single words (eg SELECTED), unquoted values (eg COLS=5)
+	// and quoted values (eg WIDTH="10px"). Spaces between elements
+	// are allowed.
+	private final Pattern attributePattern = Pattern.compile("(\\s*)([^=\\s]*)(?:(\\s*?=\\s*?)(?:([^\\s\"]+)|(\".*?\")))?");
+	
 	public static final byte JAVASCRIPT = Token.INTERNAL_FIRST;
 
 	public HTMLTokenMarker() {
@@ -37,6 +47,10 @@ public class HTMLTokenMarker extends TokenMarker {
 		lastOffset = offset;
 		lastKeyword = offset;
 		int lineLength = line.count + offset;
+		int spacePos = -1;
+		boolean tagFound = false;
+		boolean spaceInTag = false;
+		boolean moreInTag = false;
 		boolean backslash = false;
 
 		loop: for (int i = offset; i < lineLength; i++) {
@@ -65,6 +79,7 @@ public class HTMLTokenMarker extends TokenMarker {
 					} else {
 						token = Token.KEYWORD1;
 					}
+					tagFound = spaceInTag = moreInTag = false;
 					break;
 				case '&':
 					addToken(line, lastOffset, i - lastOffset, token);
@@ -75,8 +90,34 @@ public class HTMLTokenMarker extends TokenMarker {
 				break;
 			case Token.KEYWORD1: // Inside a tag
 				backslash = false;
-				if (c == '>') {
-					addToken(line, lastOffset, i1 - lastOffset, token);
+				if (!tagFound && Character.isLetter(c)) {
+					tagFound = true;
+				} else if (tagFound && !spaceInTag && (c == ' ')) {
+					spaceInTag = true;
+					spacePos = i;
+				} else if (spaceInTag && Character.isLetter(c)) {
+					moreInTag = true;
+				} else if (c == '>') {
+					if (moreInTag) {
+						addToken(line, lastOffset, 1, Token.NULL);
+						addToken(line, lastOffset + 1, spacePos - lastOffset - 1, token);
+						
+						String ln = new String(line.array, spacePos, i1 - spacePos - 1);
+						Matcher m = attributePattern.matcher(ln);
+						while (m.find()) {
+							addToken(line, m.start(1) + spacePos, m.end(1) - m.start(1), Token.NULL);
+							addToken(line, m.start(2) + spacePos, m.end(2) - m.start(2), Token.KEYWORD3);
+							addToken(line, m.start(3) + spacePos, m.end(3) - m.start(3), Token.NULL);
+							addToken(line, m.start(4) + spacePos, m.end(4) - m.start(4), Token.LITERAL1);
+							addToken(line, m.start(5) + spacePos, m.end(5) - m.start(5), Token.LITERAL1);
+						}
+						
+						addToken(line, i1 - 1, 1, Token.NULL);
+					} else {
+						addToken(line, lastOffset, 1, Token.NULL);
+						addToken(line, lastOffset + 1, i1 - lastOffset - 2, token);
+						addToken(line, i1 - 1, 1, Token.NULL);
+					}
 					lastOffset = lastKeyword = i1;
 					token = Token.NULL;
 				}
